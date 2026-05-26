@@ -1,0 +1,96 @@
+import subprocess, json, urllib.request
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
+
+class Handler(BaseHTTPRequestHandler):
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', '*')
+        self.end_headers()
+
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+
+        if parsed.path == '/img':
+            url = params.get('url', [None])[0]
+            if not url:
+                self.send_response(400)
+                self.end_headers()
+                return
+            try:
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req) as r:
+                    data = r.read()
+                self.send_response(200)
+                self.send_header('Content-Type', 'image/jpeg')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.send_header('Content-Length', len(data))
+                self.end_headers()
+                self.wfile.write(data)
+            except Exception as e:
+                self.send_response(500)
+                self.end_headers()
+            return
+
+        url = params.get('url', [None])[0]
+        if not url or 'pinterest.com' not in url:
+            self.respond(400, {'error': 'Invalid URL'})
+            return
+
+        try:
+            result = subprocess.run(
+                ['python3', '-m', 'gallery_dl', '--dump-json', url],
+                capture_output=True, text=True, timeout=60
+            )
+            data = json.loads(result.stdout)
+            images = []
+            for item in data:
+                if not isinstance(item, list) or len(item) < 2:
+                    continue
+                entry = item[1]
+                if not isinstance(entry, dict):
+                    continue
+                imgs = entry.get('images', {})
+                orig = imgs.get('orig', {})
+                img_url = orig.get('url', '')
+                if not img_url:
+                    continue
+                section = ''
+                bs = entry.get('board_section')
+                if isinstance(bs, dict):
+                    section = bs.get('title', '')
+                pin_id = entry.get('id', '')
+                pin_url = 'https://www.pinterest.com/pin/' + str(pin_id) + '/' if pin_id else ''
+                is_video = entry.get('type', '') in ('pin', 'story') and (
+                    entry.get('videos') is not None or
+                    entry.get('is_video', False) or
+                    img_url.endswith('.gif')
+                )
+                images.append({
+                    'url': img_url,
+                    'section': section,
+                    'width': orig.get('width', 736),
+                    'height': orig.get('height', 1000),
+                    'pin_url': pin_url,
+                    'is_video': is_video
+                })
+            self.respond(200, {'images': images})
+        except Exception as e:
+            self.respond(500, {'error': str(e)})
+
+    def respond(self, code, data):
+        body = json.dumps(data).encode()
+        self.send_response(code)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Content-Length', len(body))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args): pass
+
+print('Server running on http://localhost:8765')
+HTTPServer(('localhost', 8765), Handler).serve_forever()
