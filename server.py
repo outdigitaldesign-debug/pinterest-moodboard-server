@@ -1,4 +1,4 @@
-import subprocess, json, urllib.request
+import subprocess, json, urllib.request, os
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
@@ -64,11 +64,7 @@ class Handler(BaseHTTPRequestHandler):
                     section = bs.get('title', '')
                 pin_id = entry.get('id', '')
                 pin_url = 'https://www.pinterest.com/pin/' + str(pin_id) + '/' if pin_id else ''
-                is_video = entry.get('type', '') in ('pin', 'story') and (
-                    entry.get('videos') is not None or
-                    entry.get('is_video', False) or
-                    img_url.endswith('.gif')
-                )
+                is_video = entry.get('videos') is not None or entry.get('is_video', False) or img_url.endswith('.gif')
                 images.append({
                     'url': img_url,
                     'section': section,
@@ -92,5 +88,6 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, *args): pass
 
-print('Server running on http://localhost:8765')
-HTTPServer(('localhost', 8765), Handler).serve_forever()
+port = int(os.environ.get('PORT', 8765))
+print(f'Server running on port {port}')
+HTTPServer(('0.0.0.0', port), Handler).serve_forever()
