@@ -1,4 +1,4 @@
-import subprocess, json, urllib.request, os
+import subprocess, json, urllib.request, urllib.error, os
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
@@ -6,9 +6,53 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(200)
         self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', '*')
         self.end_headers()
+
+    def do_POST(self):
+        parsed = urlparse(self.path)
+
+        if parsed.path == '/to-slides':
+            # Читаем тело запроса от Figma-плагина
+            length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(length)
+
+            try:
+                payload = json.loads(body)
+                script_url = payload.get('scriptUrl')
+                if not script_url:
+                    self.respond(400, {'error': 'scriptUrl is required'})
+                    return
+
+                # Пересылаем в Google Apps Script
+                req = urllib.request.Request(
+                    script_url,
+                    data=json.dumps(payload).encode('utf-8'),
+                    headers={
+                        'Content-Type': 'application/json',
+                        'User-Agent': 'Mozilla/5.0',
+                    },
+                    method='POST'
+                )
+                with urllib.request.urlopen(req, timeout=120) as r:
+                    response_body = r.read()
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.send_header('Content-Length', len(response_body))
+                self.end_headers()
+                self.wfile.write(response_body)
+
+            except urllib.error.HTTPError as e:
+                err_body = e.read()
+                self.respond(502, {'error': 'Apps Script error: ' + err_body.decode('utf-8', errors='replace')})
+            except Exception as e:
+                self.respond(500, {'error': str(e)})
+            return
+
+        self.respond(404, {'error': 'Not found'})
 
     def do_GET(self):
         parsed = urlparse(self.path)
